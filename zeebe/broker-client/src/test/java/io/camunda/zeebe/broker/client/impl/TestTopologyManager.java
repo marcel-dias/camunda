@@ -75,6 +75,7 @@ final class TestTopologyManager implements BrokerTopologyManager {
     private final List<Integer> brokers = new ArrayList<>();
     private final Map<Integer, Integer> partitionLeaders = new HashMap<>();
     private final List<Integer> partitions = new ArrayList<>();
+    private final Map<Integer, String> brokerZones = new HashMap<>();
 
     @Override
     public boolean isInitialized() {
@@ -138,7 +139,7 @@ final class TestTopologyManager implements BrokerTopologyManager {
 
     @Override
     public String getBrokerZone(final int brokerId) {
-      return null;
+      return brokerZones.get(brokerId);
     }
 
     @Override
@@ -167,5 +168,14 @@ final class TestTopologyManager implements BrokerTopologyManager {
     public void addPartitionIfAbsent(final int id) {
       partitions.add(id);
     }
+
+    public void setBrokerZone(final int brokerId, final String zone) {
+      brokerZones.put(brokerId, zone);
+    }
+  }
+
+  TestTopologyManager setBrokerZone(final int brokerId, final String zone) {
+    topology.setBrokerZone(brokerId, zone);
+    return this;
   }
 }
