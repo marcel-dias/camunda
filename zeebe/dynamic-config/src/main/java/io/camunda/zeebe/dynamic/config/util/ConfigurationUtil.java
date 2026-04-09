@@ -16,6 +16,7 @@ import io.camunda.zeebe.dynamic.config.state.MemberState;
 import io.camunda.zeebe.dynamic.config.state.PartitionState;
 import io.camunda.zeebe.dynamic.config.state.PartitionState.State;
 import io.camunda.zeebe.dynamic.config.state.RoutingState;
+import io.camunda.zeebe.dynamic.config.state.TopologyInfo;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -31,6 +32,15 @@ public final class ConfigurationUtil {
       final Set<PartitionMetadata> partitionDistribution,
       final DynamicPartitionConfig partitionConfig,
       final String clusterId) {
+    return getClusterConfigFrom(
+        partitionDistribution, partitionConfig, clusterId, new TopologyInfo());
+  }
+
+  public static ClusterConfiguration getClusterConfigFrom(
+      final Set<PartitionMetadata> partitionDistribution,
+      final DynamicPartitionConfig partitionConfig,
+      final String clusterId,
+      final TopologyInfo localTopology) {
     final var partitionStatesByMember = new HashMap<MemberId, Map<Integer, PartitionState>>();
     for (final var partitionMetadata : partitionDistribution) {
       final var partitionId = partitionMetadata.id().id();
@@ -43,7 +53,10 @@ public final class ConfigurationUtil {
     }
     final var memberStates = new HashMap<MemberId, MemberState>();
     for (final var e : partitionStatesByMember.entrySet()) {
-      memberStates.put(e.getKey(), MemberState.initializeAsActive(e.getValue()));
+      memberStates.put(
+          e.getKey(),
+          MemberState.initializeAsActive(
+              e.getValue(), localTopology != null ? localTopology : new TopologyInfo()));
     }
 
     final var routingState =

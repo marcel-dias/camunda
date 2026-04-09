@@ -12,6 +12,7 @@ import io.atomix.primitive.partition.PartitionId;
 import io.atomix.primitive.partition.PartitionMetadata;
 import io.camunda.zeebe.dynamic.config.state.ClusterConfiguration;
 import io.camunda.zeebe.dynamic.config.state.DynamicPartitionConfig;
+import io.camunda.zeebe.dynamic.config.state.TopologyInfo;
 import io.camunda.zeebe.dynamic.config.util.ConfigurationUtil;
 import java.util.List;
 import java.util.Set;
@@ -23,7 +24,28 @@ public record StaticConfiguration(
     List<PartitionId> partitionIds,
     int replicationFactor,
     DynamicPartitionConfig partitionConfig,
-    String clusterId) {
+    String clusterId,
+    TopologyInfo localTopology) {
+
+  /** Backward-compatible constructor without topology. */
+  public StaticConfiguration(
+      final PartitionDistributor partitionDistributor,
+      final Set<MemberId> clusterMembers,
+      final MemberId localMemberId,
+      final List<PartitionId> partitionIds,
+      final int replicationFactor,
+      final DynamicPartitionConfig partitionConfig,
+      final String clusterId) {
+    this(
+        partitionDistributor,
+        clusterMembers,
+        localMemberId,
+        partitionIds,
+        replicationFactor,
+        partitionConfig,
+        clusterId,
+        new TopologyInfo());
+  }
 
   public int partitionCount() {
     return partitionIds.size();
@@ -32,7 +54,7 @@ public record StaticConfiguration(
   public ClusterConfiguration generateTopology() {
     final Set<PartitionMetadata> partitionDistribution = generatePartitionDistribution();
     return ConfigurationUtil.getClusterConfigFrom(
-        partitionDistribution, partitionConfig, clusterId);
+        partitionDistribution, partitionConfig, clusterId, localTopology);
   }
 
   public Set<PartitionMetadata> generatePartitionDistribution() {
