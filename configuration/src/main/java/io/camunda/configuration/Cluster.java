@@ -151,6 +151,9 @@ public class Cluster implements Cloneable {
    */
   @NestedConfigurationProperty private Partitioning partitioning = new Partitioning();
 
+  /** Topology information describing the placement of this node in the infrastructure. */
+  @NestedConfigurationProperty private TopologyInfo topology = new TopologyInfo();
+
   private boolean sendOnLegacySubject = true;
   private boolean receiveOnLegacySubject = true;
 
@@ -322,6 +325,14 @@ public class Cluster implements Cloneable {
     this.partitioning = partitioning;
   }
 
+  public TopologyInfo getTopology() {
+    return topology;
+  }
+
+  public void setTopology(final TopologyInfo topology) {
+    this.topology = topology;
+  }
+
   public boolean isReceiveOnLegacySubject() {
     return receiveOnLegacySubject;
   }
@@ -377,6 +388,10 @@ public class Cluster implements Cloneable {
         + compressionAlgorithm
         + ", globalListeners="
         + globalListeners
+        + ", partitioning="
+        + partitioning
+        + ", topology="
+        + topology
         + ", sendOnLegacySubject="
         + sendOnLegacySubject
         + ", receiveOnLegacySubject="
