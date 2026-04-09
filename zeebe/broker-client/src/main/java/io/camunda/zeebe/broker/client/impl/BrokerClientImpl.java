@@ -14,6 +14,7 @@ import io.camunda.zeebe.broker.client.api.BrokerClient;
 import io.camunda.zeebe.broker.client.api.BrokerClientRequestMetrics;
 import io.camunda.zeebe.broker.client.api.BrokerResponseConsumer;
 import io.camunda.zeebe.broker.client.api.BrokerTopologyManager;
+import io.camunda.zeebe.broker.client.api.RequestDispatchStrategy;
 import io.camunda.zeebe.broker.client.api.dto.BrokerRequest;
 import io.camunda.zeebe.broker.client.api.dto.BrokerResponse;
 import io.camunda.zeebe.scheduler.ActorSchedulingService;
@@ -48,6 +49,26 @@ public final class BrokerClientImpl implements BrokerClient {
       final BrokerTopologyManager topologyManager,
       final BrokerClientRequestMetrics metrics,
       final TopicSupplier sendingTopicSupplier) {
+    this(
+        requestTimeout,
+        messagingService,
+        eventService,
+        schedulingService,
+        topologyManager,
+        metrics,
+        sendingTopicSupplier,
+        new RoundRobinDispatchStrategy());
+  }
+
+  public BrokerClientImpl(
+      final Duration requestTimeout,
+      final MessagingService messagingService,
+      final ClusterEventService eventService,
+      final ActorSchedulingService schedulingService,
+      final BrokerTopologyManager topologyManager,
+      final BrokerClientRequestMetrics metrics,
+      final TopicSupplier sendingTopicSupplier,
+      final RequestDispatchStrategy dispatchStrategy) {
     this.eventService = eventService;
     this.schedulingService = schedulingService;
 
@@ -56,11 +77,7 @@ public final class BrokerClientImpl implements BrokerClient {
         new AtomixClientTransportAdapter(messagingService, sendingTopicSupplier);
     requestManager =
         new BrokerRequestManager(
-            atomixTransportAdapter,
-            topologyManager,
-            new RoundRobinDispatchStrategy(),
-            requestTimeout,
-            metrics);
+            atomixTransportAdapter, topologyManager, dispatchStrategy, requestTimeout, metrics);
   }
 
   @Override

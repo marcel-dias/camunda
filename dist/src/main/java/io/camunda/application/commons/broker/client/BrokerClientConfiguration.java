@@ -8,10 +8,13 @@
 package io.camunda.application.commons.broker.client;
 
 import io.atomix.cluster.AtomixCluster;
+import io.camunda.configuration.Camunda;
 import io.camunda.zeebe.broker.client.api.BrokerClient;
 import io.camunda.zeebe.broker.client.api.BrokerClientRequestMetrics;
 import io.camunda.zeebe.broker.client.api.BrokerTopologyManager;
+import io.camunda.zeebe.broker.client.api.RequestDispatchStrategy;
 import io.camunda.zeebe.broker.client.impl.BrokerClientImpl;
+import io.camunda.zeebe.broker.client.impl.ZoneAffinityDispatchStrategy;
 import io.camunda.zeebe.scheduler.ActorScheduler;
 import io.camunda.zeebe.scheduler.future.ActorFuture;
 import io.camunda.zeebe.transport.impl.AtomixServerTransport.TopicSupplier;
@@ -29,6 +32,7 @@ public final class BrokerClientConfiguration {
   private final ActorScheduler scheduler;
   private final BrokerTopologyManager topologyManager;
   private final BrokerClientRequestMetrics metrics;
+  private final Camunda camunda;
 
   @Autowired
   public BrokerClientConfiguration(
@@ -36,11 +40,13 @@ public final class BrokerClientConfiguration {
       final AtomixCluster cluster,
       final ActorScheduler scheduler,
       final BrokerTopologyManager topologyManager,
-      final MeterRegistry meterRegistry) {
+      final MeterRegistry meterRegistry,
+      final Camunda camunda) {
     this.config = config;
     this.cluster = cluster;
     this.scheduler = scheduler;
     this.topologyManager = topologyManager;
+    this.camunda = camunda;
     metrics = new BrokerClientRequestMetrics(meterRegistry);
   }
 
@@ -51,6 +57,8 @@ public final class BrokerClientConfiguration {
             ? TopicSupplier.withLegacyTopicName()
             : TopicSupplier.withPrefix(config.engineName());
 
+    final RequestDispatchStrategy dispatchStrategy = createDispatchStrategy();
+
     final var brokerClient =
         new BrokerClientImpl(
             config.requestTimeout(),
@@ -59,9 +67,18 @@ public final class BrokerClientConfiguration {
             scheduler,
             topologyManager,
             metrics,
-            sendingTopicSupplier);
+            sendingTopicSupplier,
+            dispatchStrategy);
     brokerClient.start().forEach(ActorFuture::join);
     return brokerClient;
+  }
+
+  private RequestDispatchStrategy createDispatchStrategy() {
+    final var topology = camunda.getCluster().getTopology();
+    if (topology != null && topology.isConfigured() && topology.getZone() != null) {
+      return new ZoneAffinityDispatchStrategy(topology.getZone());
+    }
+    return RequestDispatchStrategy.roundRobin();
   }
 
   public record BrokerClientCfg(

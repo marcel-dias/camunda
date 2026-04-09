@@ -328,6 +328,11 @@ public class TopologyServiceTest {
     }
 
     @Override
+    public String getBrokerZone(final int brokerId) {
+      return null;
+    }
+
+    @Override
     public long getLastCompletedChangeId() {
       return 1;
     }

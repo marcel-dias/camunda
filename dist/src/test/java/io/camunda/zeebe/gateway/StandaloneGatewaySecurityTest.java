@@ -19,6 +19,8 @@ import io.camunda.application.commons.broker.client.BrokerClientConfiguration;
 import io.camunda.application.commons.clustering.AtomixClusterConfiguration;
 import io.camunda.application.commons.clustering.DynamicClusterServices;
 import io.camunda.application.commons.configuration.GatewayBasedConfiguration;
+import io.camunda.configuration.Camunda;
+import io.camunda.configuration.Cluster;
 import io.camunda.configuration.beans.GatewayBasedProperties;
 import io.camunda.security.configuration.SecurityConfiguration;
 import io.camunda.zeebe.broker.client.api.BrokerClient;
@@ -269,9 +271,12 @@ final class StandaloneGatewaySecurityTest {
     final var topologyManager =
         topologyServices.brokerTopologyManager(gatewayClusterConfigurationService);
 
+    final var camunda = new Camunda();
+    camunda.setCluster(new Cluster());
+
     final var brokerClientConfiguration =
         new BrokerClientConfiguration(
-            brokerClientConfig, atomixCluster, actorScheduler, topologyManager, meterRegistry);
+            brokerClientConfig, atomixCluster, actorScheduler, topologyManager, meterRegistry, camunda);
     brokerClient = brokerClientConfiguration.brokerClient();
     jobStreamClient =
         new JobStreamComponent().jobStreamClient(actorScheduler, atomixCluster, meterRegistry);
