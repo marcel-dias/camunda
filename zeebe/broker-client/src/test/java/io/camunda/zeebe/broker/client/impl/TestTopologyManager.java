@@ -137,6 +137,11 @@ final class TestTopologyManager implements BrokerTopologyManager {
     }
 
     @Override
+    public String getBrokerZone(final int brokerId) {
+      return null;
+    }
+
+    @Override
     public PartitionHealthStatus getPartitionHealth(final int brokerId, final int partition) {
       return null;
     }

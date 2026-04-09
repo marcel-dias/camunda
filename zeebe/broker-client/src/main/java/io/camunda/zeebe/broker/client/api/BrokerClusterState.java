@@ -47,6 +47,9 @@ public interface BrokerClusterState {
 
   PartitionHealthStatus getPartitionHealth(int brokerId, int partition);
 
+  /** Returns the zone of the given broker, or null if unknown. */
+  String getBrokerZone(int brokerId);
+
   long getLastCompletedChangeId();
 
   String getClusterId();

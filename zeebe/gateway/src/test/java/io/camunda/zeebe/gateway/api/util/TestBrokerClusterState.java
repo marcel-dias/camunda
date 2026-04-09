@@ -110,6 +110,11 @@ public final class TestBrokerClusterState implements BrokerClusterState {
   }
 
   @Override
+  public String getBrokerZone(final int brokerId) {
+    return null; // Default zone for testing purposes
+  }
+
+  @Override
   public PartitionHealthStatus getPartitionHealth(final int brokerId, final int partition) {
     return brokerPartitionHealthStatus.getOrDefault(
         Tuple.of(brokerId, partition), PartitionHealthStatus.UNHEALTHY);
