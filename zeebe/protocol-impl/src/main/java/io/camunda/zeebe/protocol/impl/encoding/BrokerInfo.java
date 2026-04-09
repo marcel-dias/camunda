@@ -53,6 +53,8 @@ public final class BrokerInfo implements BufferReader, BufferWriter {
 
   private static final String BROKER_INFO_PROPERTY_NAME = "brokerInfo";
   private static final DirectBuffer COMMAND_API_NAME = wrapString("commandApi");
+  private static final DirectBuffer TOPOLOGY_ZONE_KEY = wrapString("topology.zone");
+  private static final DirectBuffer TOPOLOGY_REGION_KEY = wrapString("topology.region");
 
   private static final Logger LOG = Loggers.PROTOCOL_LOGGER;
 
@@ -205,6 +207,36 @@ public final class BrokerInfo implements BufferReader, BufferWriter {
 
   public BrokerInfo setCommandApiAddress(final DirectBuffer address) {
     return addAddress(COMMAND_API_NAME, address);
+  }
+
+  public BrokerInfo setTopologyZone(final String zone) {
+    if (zone != null) {
+      addAddress(TOPOLOGY_ZONE_KEY, wrapString(zone));
+    }
+    return this;
+  }
+
+  public String getTopologyZone() {
+    final DirectBuffer buffer = addresses.get(TOPOLOGY_ZONE_KEY);
+    if (buffer != null) {
+      return BufferUtil.bufferAsString(buffer);
+    }
+    return null;
+  }
+
+  public BrokerInfo setTopologyRegion(final String region) {
+    if (region != null) {
+      addAddress(TOPOLOGY_REGION_KEY, wrapString(region));
+    }
+    return this;
+  }
+
+  public String getTopologyRegion() {
+    final DirectBuffer buffer = addresses.get(TOPOLOGY_REGION_KEY);
+    if (buffer != null) {
+      return BufferUtil.bufferAsString(buffer);
+    }
+    return null;
   }
 
   public Map<Integer, PartitionRole> getPartitionRoles() {

@@ -129,4 +129,63 @@ final class BrokerInfoTest {
     decoded.wrap(buffer, 0, buffer.capacity());
     return decoded;
   }
+
+  @Test
+  void shouldEncodeAndDecodeTopologyZoneAndRegion() {
+    // given
+    final var brokerInfo =
+        new BrokerInfo()
+            .setNodeId(0)
+            .setPartitionsCount(3)
+            .setClusterSize(3)
+            .setReplicationFactor(3)
+            .setTopologyZone("us-east-1a")
+            .setTopologyRegion("us-east-1");
+
+    // when
+    final var decoded = encodeDecode(brokerInfo);
+
+    // then
+    assertThat(decoded.getTopologyZone()).isEqualTo("us-east-1a");
+    assertThat(decoded.getTopologyRegion()).isEqualTo("us-east-1");
+  }
+
+  @Test
+  void shouldDecodeEmptyTopologyWhenNotSet() {
+    // given
+    final var brokerInfo =
+        new BrokerInfo()
+            .setNodeId(0)
+            .setPartitionsCount(1)
+            .setClusterSize(1)
+            .setReplicationFactor(1);
+
+    // when
+    final var decoded = encodeDecode(brokerInfo);
+
+    // then
+    assertThat(decoded.getTopologyZone()).isNull();
+    assertThat(decoded.getTopologyRegion()).isNull();
+  }
+
+  @Test
+  void shouldEncodeTopologyAlongsideCommandApiAddress() {
+    // given
+    final var brokerInfo =
+        new BrokerInfo()
+            .setNodeId(0)
+            .setPartitionsCount(1)
+            .setClusterSize(1)
+            .setReplicationFactor(1)
+            .setCommandApiAddress("localhost:26501")
+            .setTopologyZone("zone-a");
+
+    // when
+    final var decoded = encodeDecode(brokerInfo);
+
+    // then
+    assertThat(decoded.getCommandApiAddress()).isEqualTo("localhost:26501");
+    assertThat(decoded.getTopologyZone()).isEqualTo("zone-a");
+    assertThat(decoded.getTopologyRegion()).isNull();
+  }
 }
