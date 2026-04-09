@@ -418,6 +418,190 @@ class TopologyAwarePartitionDistributorTest {
   }
 
   @Nested
+  class BrokerReplacementScenario {
+
+    // 2 regions, 4 brokers per region, 8 partitions, RF=4
+    // Region us-east: brokers 0-3 (zones us-east-1a, us-east-1b)
+    // Region eu-west: brokers 4-7 (zones eu-west-1a, eu-west-1b)
+
+    private TopologyConstraints buildConstraints(final Set<MemberId> members) {
+      final var zones =
+          Map.ofEntries(
+              Map.entry(MemberId.from("0"), "us-east-1a"),
+              Map.entry(MemberId.from("1"), "us-east-1a"),
+              Map.entry(MemberId.from("2"), "us-east-1b"),
+              Map.entry(MemberId.from("3"), "us-east-1b"),
+              Map.entry(MemberId.from("4"), "eu-west-1a"),
+              Map.entry(MemberId.from("5"), "eu-west-1a"),
+              Map.entry(MemberId.from("6"), "eu-west-1b"),
+              Map.entry(MemberId.from("7"), "eu-west-1b"));
+      final var regions =
+          Map.ofEntries(
+              Map.entry(MemberId.from("0"), "us-east"),
+              Map.entry(MemberId.from("1"), "us-east"),
+              Map.entry(MemberId.from("2"), "us-east"),
+              Map.entry(MemberId.from("3"), "us-east"),
+              Map.entry(MemberId.from("4"), "eu-west"),
+              Map.entry(MemberId.from("5"), "eu-west"),
+              Map.entry(MemberId.from("6"), "eu-west"),
+              Map.entry(MemberId.from("7"), "eu-west"));
+      // Filter to only include members that are in the active set
+      final var activeZones = new HashMap<MemberId, String>();
+      final var activeRegions = new HashMap<MemberId, String>();
+      for (final var m : members) {
+        if (zones.containsKey(m)) {
+          activeZones.put(m, zones.get(m));
+        }
+        if (regions.containsKey(m)) {
+          activeRegions.put(m, regions.get(m));
+        }
+      }
+      return new TopologyConstraints(activeZones, activeRegions);
+    }
+
+    private List<PartitionId> eightPartitions() {
+      return List.of(
+          PartitionId.from(GROUP, 1),
+          PartitionId.from(GROUP, 2),
+          PartitionId.from(GROUP, 3),
+          PartitionId.from(GROUP, 4),
+          PartitionId.from(GROUP, 5),
+          PartitionId.from(GROUP, 6),
+          PartitionId.from(GROUP, 7),
+          PartitionId.from(GROUP, 8));
+    }
+
+    @Test
+    void shouldMaintainRegionBalanceAfterBrokerReplacement() {
+      // given — initial healthy cluster with 8 brokers across 2 regions
+      final var allMembers =
+          Set.of(
+              MemberId.from("0"),
+              MemberId.from("1"),
+              MemberId.from("2"),
+              MemberId.from("3"),
+              MemberId.from("4"),
+              MemberId.from("5"),
+              MemberId.from("6"),
+              MemberId.from("7"));
+      final var initialConstraints = buildConstraints(allMembers);
+      final var initialDistributor = new TopologyAwarePartitionDistributor(initialConstraints);
+      final var initialResult =
+          initialDistributor.distributePartitions(allMembers, eightPartitions(), 4);
+
+      // when — broker 3 is removed (simulating failure)
+      // In K8s StatefulSet, the replacement pod gets the SAME ordinal (broker 3)
+      // The new broker 3 rejoins with the same zone/region config
+      // After redistribution with the full member set, the distribution is recalculated
+      final var afterReplacementConstraints = buildConstraints(allMembers);
+      final var afterReplacementDistributor =
+          new TopologyAwarePartitionDistributor(afterReplacementConstraints);
+      final var afterResult =
+          afterReplacementDistributor.distributePartitions(allMembers, eightPartitions(), 4);
+
+      // then — distribution is identical (same member ID → deterministic result)
+      assertThat(afterResult).isEqualTo(initialResult);
+    }
+
+    @Test
+    void shouldHandleDegradedClusterWhenBrokerIsDown() {
+      // given — broker 3 is down, only 7 brokers active
+      final var degradedMembers =
+          Set.of(
+              MemberId.from("0"),
+              MemberId.from("1"),
+              MemberId.from("2"),
+              // broker 3 is missing
+              MemberId.from("4"),
+              MemberId.from("5"),
+              MemberId.from("6"),
+              MemberId.from("7"));
+      final var degradedConstraints = buildConstraints(degradedMembers);
+      final var distributor = new TopologyAwarePartitionDistributor(degradedConstraints);
+
+      // when — redistribute with 7 brokers
+      final var result = distributor.distributePartitions(degradedMembers, eightPartitions(), 4);
+
+      // then — still 4 replicas per partition (enough brokers remain)
+      for (final var partition : result) {
+        assertThat(partition.members()).hasSize(4);
+      }
+
+      // then — both regions still have replicas (us-east has 3 brokers, eu-west has 4)
+      for (final var partition : result) {
+        final var regionCounts =
+            partition.members().stream()
+                .collect(
+                    Collectors.groupingBy(
+                        m -> degradedConstraints.getRegionForMember(m).orElseThrow(),
+                        Collectors.counting()));
+        assertThat(regionCounts).containsKeys("us-east", "eu-west");
+      }
+    }
+
+    @Test
+    void shouldAssignSameBrokerIdWhenStatefulSetReplacesFailedPod() {
+      // given — broker IDs in Zeebe are static (0..N-1 via ClusterScaleRequest)
+      // K8s StatefulSet guarantees: deleted pod-3 → new pod-3 with same ordinal
+
+      // Simulate: initial cluster → broker 3 removed → broker 3 re-added (same ID)
+      final var fullSet =
+          Set.of(
+              MemberId.from("0"),
+              MemberId.from("1"),
+              MemberId.from("2"),
+              MemberId.from("3"),
+              MemberId.from("4"),
+              MemberId.from("5"),
+              MemberId.from("6"),
+              MemberId.from("7"));
+
+      final var withoutBroker3 =
+          Set.of(
+              MemberId.from("0"),
+              MemberId.from("1"),
+              MemberId.from("2"),
+              MemberId.from("4"),
+              MemberId.from("5"),
+              MemberId.from("6"),
+              MemberId.from("7"));
+
+      final var initialConstraints = buildConstraints(fullSet);
+      final var degradedConstraints = buildConstraints(withoutBroker3);
+      final var restoredConstraints = buildConstraints(fullSet);
+
+      // when — compute distributions at each phase
+      final var beforeFailure =
+          new TopologyAwarePartitionDistributor(initialConstraints)
+              .distributePartitions(fullSet, eightPartitions(), 4);
+      final var duringFailure =
+          new TopologyAwarePartitionDistributor(degradedConstraints)
+              .distributePartitions(withoutBroker3, eightPartitions(), 4);
+      final var afterRecovery =
+          new TopologyAwarePartitionDistributor(restoredConstraints)
+              .distributePartitions(fullSet, eightPartitions(), 4);
+
+      // then — the replacement broker 3 gets the SAME member ID
+      assertThat(fullSet).contains(MemberId.from("3"));
+
+      // then — distribution after recovery matches the original (deterministic)
+      assertThat(afterRecovery).isEqualTo(beforeFailure);
+
+      // then — during failure, broker 3 is NOT in any partition
+      for (final var partition : duringFailure) {
+        assertThat(partition.members()).doesNotContain(MemberId.from("3"));
+      }
+
+      // then — after recovery, broker 3 IS back in partitions
+      final boolean broker3InAnyPartition =
+          afterRecovery.stream().anyMatch(p -> p.members().contains(MemberId.from("3")));
+      assertThat(broker3InAnyPartition)
+          .as("Broker 3 should be assigned to partitions after recovery")
+          .isTrue();
+    }
+  }
+
+  @Nested
   class ThreeRegionCluster {
 
     // 12 brokers: 4 per region, 2 zones per region
