@@ -196,6 +196,46 @@ class TopologyAwarePartitionDistributorTest {
     }
 
     @Test
+    void shouldSatisfyReplicationFactorWithSmallZones() {
+      // given — 2 zones with 1 member each, RF=2 (tight fit but possible)
+      final Set<MemberId> members = Set.of(MemberId.from("0"), MemberId.from("1"));
+      final TopologyConstraints constraints =
+          new TopologyConstraints(
+              Map.of(
+                  MemberId.from("0"), "zone-a",
+                  MemberId.from("1"), "zone-b"));
+      final var distributor = new TopologyAwarePartitionDistributor(constraints);
+      final var partitions = List.of(PartitionId.from(GROUP, 1));
+
+      // when
+      final var result = distributor.distributePartitions(members, partitions, 2);
+
+      // then — RF=2 satisfied with 1 member per zone
+      final var partition = result.iterator().next();
+      assertThat(partition.members()).hasSize(2);
+    }
+
+    @Test
+    void shouldUseAllAvailableMembersWhenRFExceedsTotalMembers() {
+      // given — 2 members, RF=3 (impossible to fully satisfy)
+      final Set<MemberId> members = Set.of(MemberId.from("0"), MemberId.from("1"));
+      final TopologyConstraints constraints =
+          new TopologyConstraints(
+              Map.of(
+                  MemberId.from("0"), "zone-a",
+                  MemberId.from("1"), "zone-b"));
+      final var distributor = new TopologyAwarePartitionDistributor(constraints);
+      final var partitions = List.of(PartitionId.from(GROUP, 1));
+
+      // when
+      final var result = distributor.distributePartitions(members, partitions, 3);
+
+      // then — uses all available members (can't exceed total member count)
+      final var partition = result.iterator().next();
+      assertThat(partition.members()).hasSize(2); // only 2 members available
+    }
+
+    @Test
     void shouldHandleAsymmetricZoneSizes() {
       // given — zone-a has 3 nodes, zone-b has 1 node, RF=3
       final Set<MemberId> members =

@@ -79,6 +79,21 @@ public class TopologyAwarePartitionDistributor implements PartitionDistributor {
         }
       }
 
+      // Second pass: fill remaining slots from zones with spare members
+      if (selectedMembers.size() < replicationFactor) {
+        for (int i = 0; i < zoneCount && selectedMembers.size() < replicationFactor; i++) {
+          final int zIdx = (startZoneIdx + i) % zoneCount;
+          final var zone = sortedZones.get(zIdx);
+          final var zoneMembers = membersByZone.get(zone);
+          for (final var member : zoneMembers) {
+            if (selectedMembers.size() >= replicationFactor) {
+              break;
+            }
+            selectedMembers.add(member); // LinkedHashSet ignores duplicates
+          }
+        }
+      }
+
       // Assign priorities — first member (from the starting zone) gets highest
       final var members = new ArrayList<>(selectedMembers);
       final var priorities = new HashMap<MemberId, Integer>();
