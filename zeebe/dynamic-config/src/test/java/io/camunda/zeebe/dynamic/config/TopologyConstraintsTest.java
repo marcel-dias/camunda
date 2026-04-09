@@ -52,4 +52,30 @@ class TopologyConstraintsTest {
     // then
     assertThat(empty.isTopologyAware()).isFalse();
   }
+
+  @Test
+  void shouldGroupMembersByRegion() {
+    // given
+    final var constraints =
+        new TopologyConstraints(
+            Map.of(MemberId.from("0"), "zone-a", MemberId.from("1"), "zone-b"),
+            Map.of(MemberId.from("0"), "us-east", MemberId.from("1"), "eu-west"));
+
+    // when/then
+    assertThat(constraints.isRegionAware()).isTrue();
+    assertThat(constraints.getRegions()).containsExactlyInAnyOrder("us-east", "eu-west");
+    assertThat(constraints.getMembersInRegion("us-east")).containsExactly(MemberId.from("0"));
+    assertThat(constraints.getRegionForMember(MemberId.from("1"))).contains("eu-west");
+    assertThat(constraints.regionCount()).isEqualTo(2);
+  }
+
+  @Test
+  void shouldNotBeRegionAwareWithoutRegionData() {
+    // given
+    final var constraints = new TopologyConstraints(Map.of(MemberId.from("0"), "zone-a"));
+
+    // when/then
+    assertThat(constraints.isRegionAware()).isFalse();
+    assertThat(constraints.getRegions()).isEmpty();
+  }
 }

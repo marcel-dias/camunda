@@ -34,6 +34,18 @@ public class TopologyAwarePartitionDistributor implements PartitionDistributor {
       return fallback.distributePartitions(clusterMembers, sortedPartitionIds, replicationFactor);
     }
 
+    if (constraints.isRegionAware()) {
+      return distributeByRegion(clusterMembers, sortedPartitionIds, replicationFactor);
+    }
+
+    return distributeByZone(clusterMembers, sortedPartitionIds, replicationFactor);
+  }
+
+  private Set<PartitionMetadata> distributeByZone(
+      final Set<MemberId> clusterMembers,
+      final List<PartitionId> sortedPartitionIds,
+      final int replicationFactor) {
+
     final var sortedZones = constraints.getZones().stream().sorted().toList();
     final var membersByZone = new LinkedHashMap<String, List<MemberId>>();
     for (final var zone : sortedZones) {
@@ -95,6 +107,87 @@ public class TopologyAwarePartitionDistributor implements PartitionDistributor {
       }
 
       // Assign priorities — first member (from the starting zone) gets highest
+      final var members = new ArrayList<>(selectedMembers);
+      final var priorities = new HashMap<MemberId, Integer>();
+      for (int i = 0; i < members.size(); i++) {
+        priorities.put(members.get(i), replicationFactor - i);
+      }
+      final int targetPriority = replicationFactor;
+      final var primary = members.get(0);
+
+      result.add(
+          new PartitionMetadata(partitionId, selectedMembers, priorities, targetPriority, primary));
+    }
+
+    return result;
+  }
+
+  private Set<PartitionMetadata> distributeByRegion(
+      final Set<MemberId> clusterMembers,
+      final List<PartitionId> sortedPartitionIds,
+      final int replicationFactor) {
+
+    final var sortedRegions = constraints.getRegions().stream().sorted().toList();
+    final int regionCount = sortedRegions.size();
+
+    // Build members-by-region, sorted deterministically
+    final var membersByRegion = new LinkedHashMap<String, List<MemberId>>();
+    for (final var region : sortedRegions) {
+      membersByRegion.put(
+          region,
+          constraints.getMembersInRegion(region).stream()
+              .filter(clusterMembers::contains)
+              .sorted(Comparator.comparing(MemberId::id))
+              .collect(Collectors.toCollection(ArrayList::new)));
+    }
+
+    // Track round-robin index per region
+    final var regionIndexes = new HashMap<String, Integer>();
+    sortedRegions.forEach(r -> regionIndexes.put(r, 0));
+
+    final var result = new LinkedHashSet<PartitionMetadata>();
+
+    for (int pIdx = 0; pIdx < sortedPartitionIds.size(); pIdx++) {
+      final var partitionId = sortedPartitionIds.get(pIdx);
+      final var selectedMembers = new LinkedHashSet<MemberId>();
+
+      final int replicasPerRegion = replicationFactor / regionCount;
+      final int extraReplicas = replicationFactor % regionCount;
+
+      // Rotate starting region per partition for leader distribution
+      final int startRegionIdx = pIdx % regionCount;
+
+      for (int i = 0; i < regionCount && selectedMembers.size() < replicationFactor; i++) {
+        final int rIdx = (startRegionIdx + i) % regionCount;
+        final var region = sortedRegions.get(rIdx);
+        final var regionMembers = membersByRegion.get(region);
+        if (regionMembers.isEmpty()) {
+          continue;
+        }
+
+        final int count = replicasPerRegion + (i < extraReplicas ? 1 : 0);
+        for (int r = 0; r < count && selectedMembers.size() < replicationFactor; r++) {
+          final int idx = regionIndexes.get(region);
+          selectedMembers.add(regionMembers.get(idx % regionMembers.size()));
+          regionIndexes.put(region, idx + 1);
+        }
+      }
+
+      // Second pass: fill remaining slots from any region
+      if (selectedMembers.size() < replicationFactor) {
+        for (int i = 0; i < regionCount && selectedMembers.size() < replicationFactor; i++) {
+          final int rIdx = (startRegionIdx + i) % regionCount;
+          final var regionMembers = membersByRegion.get(sortedRegions.get(rIdx));
+          for (final var member : regionMembers) {
+            if (selectedMembers.size() >= replicationFactor) {
+              break;
+            }
+            selectedMembers.add(member);
+          }
+        }
+      }
+
+      // Priorities: first member (from starting region) gets highest
       final var members = new ArrayList<>(selectedMembers);
       final var priorities = new HashMap<MemberId, Integer>();
       for (int i = 0; i < members.size(); i++) {

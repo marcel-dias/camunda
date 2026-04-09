@@ -65,4 +65,57 @@ public final class ZoneAwarePriorityCalculator {
     }
     return Map.copyOf(priorities);
   }
+
+  /**
+   * Compute priorities with region-level rotation. The preferred leader region rotates by partition
+   * ID. Within the preferred region, members get the highest priorities.
+   *
+   * @param partitionId the partition number (1-based)
+   * @param memberZones map of member → zone for each member in this partition
+   * @param memberRegions map of member → region for each member in this partition
+   * @param replicationFactor the replication factor
+   * @return map of member → priority (higher = more preferred for leadership)
+   */
+  public static Map<MemberId, Integer> computePriorities(
+      final int partitionId,
+      final Map<MemberId, String> memberZones,
+      final Map<MemberId, String> memberRegions,
+      final int replicationFactor) {
+
+    if (memberRegions.isEmpty()) {
+      return computePriorities(partitionId, memberZones, replicationFactor);
+    }
+
+    final var sortedRegions = memberRegions.values().stream().distinct().sorted().toList();
+    final int regionCount = sortedRegions.size();
+
+    // Group members by region, sorted within each region
+    final var membersByRegion = new LinkedHashMap<String, List<MemberId>>();
+    for (final var region : sortedRegions) {
+      membersByRegion.put(
+          region,
+          memberRegions.entrySet().stream()
+              .filter(e -> e.getValue().equals(region))
+              .map(Map.Entry::getKey)
+              .sorted(Comparator.comparing(MemberId::id))
+              .toList());
+    }
+
+    // Rotate starting region by partition ID
+    final int startRegionIdx = (partitionId - 1) % regionCount;
+
+    final var priorities = new HashMap<MemberId, Integer>();
+    int currentPriority = replicationFactor;
+
+    for (int i = 0; i < regionCount; i++) {
+      final int rIdx = (startRegionIdx + i) % regionCount;
+      final var region = sortedRegions.get(rIdx);
+      for (final var member : membersByRegion.get(region)) {
+        if (priorities.size() < replicationFactor) {
+          priorities.put(member, currentPriority--);
+        }
+      }
+    }
+    return Map.copyOf(priorities);
+  }
 }

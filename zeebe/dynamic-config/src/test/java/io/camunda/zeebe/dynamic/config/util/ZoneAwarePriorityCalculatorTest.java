@@ -104,6 +104,41 @@ class ZoneAwarePriorityCalculatorTest {
     assertThat(first).isEqualTo(second);
   }
 
+  @Test
+  void shouldRotatePreferredRegionByPartitionId() {
+    // given — 4 members, 2 regions
+    final var memberZones =
+        Map.of(
+            MemberId.from("0"),
+            "us-east-1a",
+            MemberId.from("1"),
+            "us-east-1b",
+            MemberId.from("2"),
+            "eu-west-1a",
+            MemberId.from("3"),
+            "eu-west-1b");
+    final var memberRegions =
+        Map.of(
+            MemberId.from("0"),
+            "us-east",
+            MemberId.from("1"),
+            "us-east",
+            MemberId.from("2"),
+            "eu-west",
+            MemberId.from("3"),
+            "eu-west");
+
+    // when
+    final var p1 = ZoneAwarePriorityCalculator.computePriorities(1, memberZones, memberRegions, 4);
+    final var p2 = ZoneAwarePriorityCalculator.computePriorities(2, memberZones, memberRegions, 4);
+
+    // then — partition 1 prefers us-east, partition 2 prefers eu-west
+    final var p1Leader = p1.entrySet().stream().max(Map.Entry.comparingByValue()).orElseThrow();
+    final var p2Leader = p2.entrySet().stream().max(Map.Entry.comparingByValue()).orElseThrow();
+    assertThat(memberRegions.get(p1Leader.getKey())).isEqualTo("eu-west");
+    assertThat(memberRegions.get(p2Leader.getKey())).isEqualTo("us-east");
+  }
+
   private String getHighestPriorityZone(
       final Map<MemberId, Integer> priorities, final Map<MemberId, String> zones) {
     return priorities.entrySet().stream()

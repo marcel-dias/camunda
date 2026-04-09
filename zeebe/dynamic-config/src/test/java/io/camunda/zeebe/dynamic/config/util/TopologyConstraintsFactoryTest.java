@@ -106,4 +106,28 @@ class TopologyConstraintsFactoryTest {
     // then
     assertThat(constraints.isTopologyAware()).isFalse();
   }
+
+  @Test
+  void shouldBuildConstraintsWithRegionInfo() {
+    // given
+    final var topo1 = new TopologyInfo();
+    topo1.setZone("us-east-1a");
+    topo1.setRegion("us-east");
+    final var topo2 = new TopologyInfo();
+    topo2.setZone("eu-west-1a");
+    topo2.setRegion("eu-west");
+
+    final var config =
+        ClusterConfiguration.init()
+            .addMember(MemberId.from("0"), MemberState.initializeAsActive(Map.of(), topo1))
+            .addMember(MemberId.from("1"), MemberState.initializeAsActive(Map.of(), topo2));
+
+    // when
+    final var constraints = TopologyConstraintsFactory.fromClusterConfiguration(config);
+
+    // then
+    assertThat(constraints.isRegionAware()).isTrue();
+    assertThat(constraints.getRegions()).containsExactlyInAnyOrder("us-east", "eu-west");
+    assertThat(constraints.getRegionForMember(MemberId.from("0"))).contains("us-east");
+  }
 }

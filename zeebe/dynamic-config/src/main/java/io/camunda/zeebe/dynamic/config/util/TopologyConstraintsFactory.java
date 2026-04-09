@@ -23,6 +23,7 @@ public final class TopologyConstraintsFactory {
 
   public static TopologyConstraints fromClusterConfiguration(final ClusterConfiguration config) {
     final var memberZones = new HashMap<MemberId, String>();
+    final var memberRegions = new HashMap<MemberId, String>();
 
     for (final var entry : config.members().entrySet()) {
       final var memberId = entry.getKey();
@@ -40,11 +41,14 @@ public final class TopologyConstraintsFactory {
         return TopologyConstraints.unconstrained();
       }
       memberZones.put(memberId, topology.getZone());
+      if (topology.getRegion() != null) {
+        memberRegions.put(memberId, topology.getRegion());
+      }
     }
 
     if (memberZones.isEmpty()) {
       return TopologyConstraints.unconstrained();
     }
-    return new TopologyConstraints(memberZones);
+    return new TopologyConstraints(memberZones, memberRegions);
   }
 }

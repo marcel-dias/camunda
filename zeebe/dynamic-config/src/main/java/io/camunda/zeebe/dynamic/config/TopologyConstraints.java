@@ -12,23 +12,34 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Captures the zone placement of cluster members, used by partition distributors to ensure replicas
- * span availability zones.
+ * Captures the zone and region placement of cluster members, used by partition distributors to
+ * ensure replicas span availability zones and regions.
  */
 public final class TopologyConstraints {
 
   private final Map<MemberId, String> memberZones;
+  private final Map<MemberId, String> memberRegions;
 
   public TopologyConstraints(final Map<MemberId, String> memberZones) {
+    this(memberZones, Map.of());
+  }
+
+  public TopologyConstraints(
+      final Map<MemberId, String> memberZones, final Map<MemberId, String> memberRegions) {
     this.memberZones = Map.copyOf(memberZones);
+    this.memberRegions = Map.copyOf(memberRegions);
   }
 
   public static TopologyConstraints unconstrained() {
-    return new TopologyConstraints(Map.of());
+    return new TopologyConstraints(Map.of(), Map.of());
   }
 
   public boolean isTopologyAware() {
     return !memberZones.isEmpty();
+  }
+
+  public boolean isRegionAware() {
+    return !memberRegions.isEmpty();
   }
 
   public Set<String> getZones() {
@@ -48,5 +59,24 @@ public final class TopologyConstraints {
 
   public int zoneCount() {
     return (int) memberZones.values().stream().distinct().count();
+  }
+
+  public Set<String> getRegions() {
+    return Set.copyOf(memberRegions.values());
+  }
+
+  public Optional<String> getRegionForMember(final MemberId memberId) {
+    return Optional.ofNullable(memberRegions.get(memberId));
+  }
+
+  public Set<MemberId> getMembersInRegion(final String region) {
+    return memberRegions.entrySet().stream()
+        .filter(e -> e.getValue().equals(region))
+        .map(Map.Entry::getKey)
+        .collect(Collectors.toUnmodifiableSet());
+  }
+
+  public int regionCount() {
+    return (int) memberRegions.values().stream().distinct().count();
   }
 }

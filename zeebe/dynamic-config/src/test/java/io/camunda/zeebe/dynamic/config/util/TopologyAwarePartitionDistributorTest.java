@@ -269,4 +269,151 @@ class TopologyAwarePartitionDistributorTest {
       assertThat(zoneCounts).containsKeys("zone-a", "zone-b");
     }
   }
+
+  @Nested
+  class TwoRegionCluster {
+
+    // 8 brokers: 4 in region-us (2 zones), 4 in region-eu (2 zones)
+    // Brokers 0-3 in region-us: 0,1 in us-east-1a, 2,3 in us-east-1b
+    // Brokers 4-7 in region-eu: 4,5 in eu-west-1a, 6,7 in eu-west-1b
+    final Set<MemberId> members =
+        Set.of(
+            MemberId.from("0"),
+            MemberId.from("1"),
+            MemberId.from("2"),
+            MemberId.from("3"),
+            MemberId.from("4"),
+            MemberId.from("5"),
+            MemberId.from("6"),
+            MemberId.from("7"));
+
+    final TopologyConstraints constraints =
+        new TopologyConstraints(
+            Map.of(
+                MemberId.from("0"),
+                "us-east-1a",
+                MemberId.from("1"),
+                "us-east-1a",
+                MemberId.from("2"),
+                "us-east-1b",
+                MemberId.from("3"),
+                "us-east-1b",
+                MemberId.from("4"),
+                "eu-west-1a",
+                MemberId.from("5"),
+                "eu-west-1a",
+                MemberId.from("6"),
+                "eu-west-1b",
+                MemberId.from("7"),
+                "eu-west-1b"),
+            Map.of(
+                MemberId.from("0"),
+                "us-east",
+                MemberId.from("1"),
+                "us-east",
+                MemberId.from("2"),
+                "us-east",
+                MemberId.from("3"),
+                "us-east",
+                MemberId.from("4"),
+                "eu-west",
+                MemberId.from("5"),
+                "eu-west",
+                MemberId.from("6"),
+                "eu-west",
+                MemberId.from("7"),
+                "eu-west"));
+
+    @Test
+    void shouldDistributeReplicasEvenlyAcrossRegions() {
+      // given — 8 partitions, RF=4
+      final var distributor = new TopologyAwarePartitionDistributor(constraints);
+      final var partitions =
+          List.of(
+              PartitionId.from(GROUP, 1),
+              PartitionId.from(GROUP, 2),
+              PartitionId.from(GROUP, 3),
+              PartitionId.from(GROUP, 4),
+              PartitionId.from(GROUP, 5),
+              PartitionId.from(GROUP, 6),
+              PartitionId.from(GROUP, 7),
+              PartitionId.from(GROUP, 8));
+
+      // when
+      final var result = distributor.distributePartitions(members, partitions, 4);
+
+      // then — each partition should have exactly 2 replicas per region
+      for (final var partition : result) {
+        final var regionCounts =
+            partition.members().stream()
+                .collect(
+                    Collectors.groupingBy(
+                        m -> constraints.getRegionForMember(m).orElseThrow(),
+                        Collectors.counting()));
+        assertThat(regionCounts.get("us-east")).isEqualTo(2);
+        assertThat(regionCounts.get("eu-west")).isEqualTo(2);
+      }
+    }
+
+    @Test
+    void shouldBalanceLeadersAcrossRegions() {
+      // given — 8 partitions, RF=4
+      final var distributor = new TopologyAwarePartitionDistributor(constraints);
+      final var partitions =
+          List.of(
+              PartitionId.from(GROUP, 1),
+              PartitionId.from(GROUP, 2),
+              PartitionId.from(GROUP, 3),
+              PartitionId.from(GROUP, 4),
+              PartitionId.from(GROUP, 5),
+              PartitionId.from(GROUP, 6),
+              PartitionId.from(GROUP, 7),
+              PartitionId.from(GROUP, 8));
+
+      // when
+      final var result = distributor.distributePartitions(members, partitions, 4);
+
+      // then — leaders should be split 4/4 across regions
+      final var leaderRegions =
+          result.stream()
+              .map(
+                  p -> {
+                    final var primary = p.getPrimary().orElseThrow();
+                    return constraints.getRegionForMember(primary).orElseThrow();
+                  })
+              .collect(Collectors.groupingBy(r -> r, Collectors.counting()));
+      assertThat(leaderRegions.get("us-east")).isEqualTo(4);
+      assertThat(leaderRegions.get("eu-west")).isEqualTo(4);
+    }
+
+    @Test
+    void shouldEnsureDisasterRecoveryWithRegionLoss() {
+      // given — 8 partitions, RF=4
+      final var distributor = new TopologyAwarePartitionDistributor(constraints);
+      final var partitions =
+          List.of(
+              PartitionId.from(GROUP, 1),
+              PartitionId.from(GROUP, 2),
+              PartitionId.from(GROUP, 3),
+              PartitionId.from(GROUP, 4),
+              PartitionId.from(GROUP, 5),
+              PartitionId.from(GROUP, 6),
+              PartitionId.from(GROUP, 7),
+              PartitionId.from(GROUP, 8));
+
+      // when
+      final var result = distributor.distributePartitions(members, partitions, 4);
+
+      // then — if us-east is lost, every partition still has 2 replicas in eu-west
+      for (final var partition : result) {
+        final long survivingReplicas =
+            partition.members().stream()
+                .filter(m -> "eu-west".equals(constraints.getRegionForMember(m).orElse(null)))
+                .count();
+        assertThat(survivingReplicas)
+            .as("Partition %s should have 2 replicas surviving region loss", partition.id())
+            .isEqualTo(2);
+      }
+    }
+  }
 }
