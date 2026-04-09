@@ -29,11 +29,13 @@ import io.camunda.zeebe.dynamic.config.protocol.Topology.ExporterStateEnum;
 import io.camunda.zeebe.dynamic.config.protocol.Topology.MessageCorrelation;
 import io.camunda.zeebe.dynamic.config.protocol.Topology.MessageCorrelation.HashMod;
 import io.camunda.zeebe.dynamic.config.protocol.Topology.RoutingState;
+import io.camunda.zeebe.dynamic.config.state.ClusterConfiguration;
 import io.camunda.zeebe.dynamic.config.state.ClusterConfigurationChangeOperation.MemberLeaveOperation;
 import io.camunda.zeebe.dynamic.config.state.ClusterConfigurationChangeOperation.PartitionChangeOperation.PartitionJoinOperation;
 import io.camunda.zeebe.dynamic.config.state.ExportingState;
 import io.camunda.zeebe.dynamic.config.state.MemberState;
 import io.camunda.zeebe.dynamic.config.state.RoutingState.RequestHandling;
+import io.camunda.zeebe.dynamic.config.state.TopologyInfo;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -284,5 +286,37 @@ final class ProtoBufSerializerTest {
 
     // then
     assertThat(deserialized.state()).isEqualTo(ExportingState.UNKNOWN);
+  }
+
+  @Test
+  void shouldSerializeAndDeserializeMemberStateWithTopology() {
+    // given
+    final var topology = new TopologyInfo();
+    topology.setZone("zone-a");
+    topology.setRegion("region-1");
+    final var memberState = MemberState.initializeAsActive(Map.of(), topology);
+    final var clusterConfig =
+        ClusterConfiguration.init().addMember(MemberId.from("0"), memberState);
+
+    // when
+    final var encoded = protoBufSerializer.encode(clusterConfig);
+    final var decoded = protoBufSerializer.decodeClusterTopology(encoded, 0, encoded.length);
+
+    // then
+    final var decodedMember = decoded.members().get(MemberId.from("0"));
+    assertThat(decodedMember).isNotNull();
+    assertThat(decodedMember.topology()).isNotNull();
+    assertThat(decodedMember.topology().getZone()).isEqualTo("zone-a");
+    assertThat(decodedMember.topology().getRegion()).isEqualTo("region-1");
+  }
+
+  @Test
+  void shouldDeserializeMemberStateWithoutTopologyForBackwardCompatibility() {
+    // given — member without topology (simulates legacy data)
+    final var memberState = MemberState.initializeAsActive(Map.of());
+
+    // then — topology should be present but unconfigured
+    assertThat(memberState.topology()).isNotNull();
+    assertThat(memberState.topology().isConfigured()).isFalse();
   }
 }

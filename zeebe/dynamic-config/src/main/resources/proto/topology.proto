@@ -49,6 +49,8 @@ message MemberState {
   google.protobuf.Timestamp lastUpdated = 2;
   State state = 3;
   map<int32, PartitionState> partitions = 4;
+  optional string zone = 5;
+  optional string region = 6;
 }
 
 message PartitionState {

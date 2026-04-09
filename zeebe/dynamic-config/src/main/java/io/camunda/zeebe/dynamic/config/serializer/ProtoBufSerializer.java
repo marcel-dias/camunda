@@ -67,6 +67,7 @@ import io.camunda.zeebe.dynamic.config.state.PartitionState;
 import io.camunda.zeebe.dynamic.config.state.RoutingState;
 import io.camunda.zeebe.dynamic.config.state.RoutingState.MessageCorrelation;
 import io.camunda.zeebe.dynamic.config.state.RoutingState.RequestHandling;
+import io.camunda.zeebe.dynamic.config.state.TopologyInfo;
 import io.camunda.zeebe.util.Either;
 import java.nio.ByteBuffer;
 import java.time.Instant;
@@ -74,6 +75,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Optional;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.stream.Collectors;
 
@@ -210,13 +212,25 @@ public class ProtoBufSerializer
     final var partitions =
         memberState.getPartitionsMap().entrySet().stream()
             .map(e -> Map.entry(e.getKey(), decodePartitionState(e.getValue())))
-            .collect(Collectors.toMap(Entry::getKey, Entry::getValue));
+            .collect(
+                Collectors.toMap(Entry::getKey, Entry::getValue, (v1, v2) -> v1, TreeMap::new));
     final Timestamp lastUpdated = memberState.getLastUpdated();
+
+    // Decode topology fields
+    final var topology = new TopologyInfo();
+    if (memberState.hasZone()) {
+      topology.setZone(memberState.getZone());
+    }
+    if (memberState.hasRegion()) {
+      topology.setRegion(memberState.getRegion());
+    }
+
     return new MemberState(
         memberState.getVersion(),
         Instant.ofEpochSecond(lastUpdated.getSeconds(), lastUpdated.getNanos()),
         toMemberState(memberState.getState()),
-        partitions);
+        partitions,
+        topology);
   }
 
   private PartitionState decodePartitionState(final Topology.PartitionState partitionState) {
@@ -280,16 +294,26 @@ public class ProtoBufSerializer
             .map(e -> Map.entry(e.getKey(), encodePartitions(e.getValue())))
             .collect(Collectors.toMap(Entry::getKey, Entry::getValue));
     final Instant lastUpdated = memberState.lastUpdated();
-    return Topology.MemberState.newBuilder()
-        .setVersion(memberState.version())
-        .setLastUpdated(
-            Timestamp.newBuilder()
-                .setSeconds(lastUpdated.getEpochSecond())
-                .setNanos(lastUpdated.getNano())
-                .build())
-        .setState(toSerializedState(memberState.state()))
-        .putAllPartitions(partitions)
-        .build();
+    final var builder =
+        Topology.MemberState.newBuilder()
+            .setVersion(memberState.version())
+            .setLastUpdated(
+                Timestamp.newBuilder()
+                    .setSeconds(lastUpdated.getEpochSecond())
+                    .setNanos(lastUpdated.getNano())
+                    .build())
+            .setState(toSerializedState(memberState.state()))
+            .putAllPartitions(partitions);
+
+    // Add topology fields if configured
+    final var topology = memberState.topology();
+    if (topology != null && topology.getZone() != null) {
+      builder.setZone(topology.getZone());
+    }
+    if (topology != null && topology.getRegion() != null) {
+      builder.setRegion(topology.getRegion());
+    }
+    return builder.build();
   }
 
   private Topology.PartitionState encodePartitions(final PartitionState partitionState) {

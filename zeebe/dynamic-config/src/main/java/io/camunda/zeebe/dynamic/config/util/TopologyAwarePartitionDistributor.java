@@ -67,7 +67,9 @@ public class TopologyAwarePartitionDistributor implements PartitionDistributor {
         final int zIdx = (startZoneIdx + i) % zoneCount;
         final var zone = sortedZones.get(zIdx);
         final var zoneMembers = membersByZone.get(zone);
-        if (zoneMembers.isEmpty()) continue;
+        if (zoneMembers.isEmpty()) {
+          continue;
+        }
 
         final int count = replicasPerZone + (i < extraReplicas ? 1 : 0);
         for (int r = 0; r < count && selectedMembers.size() < replicationFactor; r++) {

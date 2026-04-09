@@ -10,6 +10,7 @@ package io.camunda.zeebe.dynamic.config.state;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedMap;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -26,24 +27,45 @@ import java.util.function.UnaryOperator;
  * @param version version of the state.
  * @param state current state of the member
  * @param partitions state of all partitions that the member is replicating
+ * @param topology zone/region information for topology-aware distribution
  */
 public record MemberState(
-    long version, Instant lastUpdated, State state, SortedMap<Integer, PartitionState> partitions) {
+    long version,
+    Instant lastUpdated,
+    State state,
+    SortedMap<Integer, PartitionState> partitions,
+    TopologyInfo topology) {
   public MemberState(
       final long version,
       final Instant lastUpdated,
       final State state,
       final Map<Integer, PartitionState> partitions) {
-    this(version, lastUpdated, state, ImmutableSortedMap.copyOf(partitions));
+    this(version, lastUpdated, state, ImmutableSortedMap.copyOf(partitions), new TopologyInfo());
   }
 
   public static MemberState initializeAsActive(
       final Map<Integer, PartitionState> initialPartitions) {
-    return new MemberState(0, Instant.MIN, State.ACTIVE, Map.copyOf(initialPartitions));
+    return new MemberState(
+        0,
+        Instant.MIN,
+        State.ACTIVE,
+        ImmutableSortedMap.copyOf(initialPartitions),
+        new TopologyInfo());
+  }
+
+  public static MemberState initializeAsActive(
+      final Map<Integer, PartitionState> initialPartitions, final TopologyInfo topology) {
+    return new MemberState(
+        0,
+        Instant.MIN,
+        State.ACTIVE,
+        ImmutableSortedMap.copyOf(initialPartitions),
+        topology != null ? topology : new TopologyInfo());
   }
 
   public static MemberState uninitialized() {
-    return new MemberState(0, Instant.MIN, State.UNINITIALIZED, Map.of());
+    return new MemberState(
+        0, Instant.MIN, State.UNINITIALIZED, ImmutableSortedMap.of(), new TopologyInfo());
   }
 
   public MemberState toJoining() {
@@ -163,7 +185,7 @@ public record MemberState(
    * broker.
    */
   private MemberState mergeUpgradeToV86(final MemberState other) {
-    final Map<Integer, PartitionState> updatedPartitions =
+    final SortedMap<Integer, PartitionState> updatedPartitions =
         partitions.entrySet().stream()
             .map(
                 entry -> {
@@ -177,9 +199,11 @@ public record MemberState(
                     return Map.entry(partitionId, partitionState);
                   }
                 })
-            .collect(ImmutableMap.toImmutableMap(Entry::getKey, Entry::getValue));
+            .collect(
+                ImmutableSortedMap.toImmutableSortedMap(
+                    Comparator.naturalOrder(), Entry::getKey, Entry::getValue));
 
-    return new MemberState(version, lastUpdated, state, updatedPartitions);
+    return new MemberState(version, lastUpdated, state, updatedPartitions, this.topology);
   }
 
   // returns true if the only mismatch is in the dynamic partition config. One would be
@@ -218,7 +242,8 @@ public record MemberState(
   }
 
   private MemberState update(final State state, final Map<Integer, PartitionState> partitions) {
-    return new MemberState(version + 1, Instant.now(), state, partitions);
+    return new MemberState(
+        version + 1, Instant.now(), state, ImmutableSortedMap.copyOf(partitions), this.topology);
   }
 
   public boolean hasPartition(final int partitionId) {

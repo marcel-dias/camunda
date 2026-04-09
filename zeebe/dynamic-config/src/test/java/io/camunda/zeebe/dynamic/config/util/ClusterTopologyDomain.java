@@ -20,6 +20,7 @@ import io.camunda.zeebe.dynamic.config.state.RoutingState.MessageCorrelation;
 import io.camunda.zeebe.dynamic.config.state.RoutingState.RequestHandling;
 import io.camunda.zeebe.dynamic.config.state.RoutingState.RequestHandling.ActivePartitions;
 import io.camunda.zeebe.dynamic.config.state.RoutingState.RequestHandling.AllPartitions;
+import io.camunda.zeebe.dynamic.config.state.TopologyInfo;
 import io.camunda.zeebe.util.ReflectUtil;
 import java.util.Set;
 import java.util.SortedMap;
@@ -126,6 +127,20 @@ public final class ClusterTopologyDomain extends DomainContextBase {
         .enableRecursion()
         .map(DynamicPartitionConfig::new)
         .filter(DynamicPartitionConfig::isInitialized);
+  }
+
+  @Provide
+  Arbitrary<TopologyInfo> topologyInfos() {
+    return Combinators.combine(
+            Arbitraries.strings().ofMinLength(0).ofMaxLength(20).injectNull(0.3),
+            Arbitraries.strings().ofMinLength(0).ofMaxLength(20).injectNull(0.3))
+        .as(
+            (zone, region) -> {
+              final var info = new TopologyInfo();
+              info.setZone(zone);
+              info.setRegion(region);
+              return info;
+            });
   }
 
   @SuppressWarnings("unused")
