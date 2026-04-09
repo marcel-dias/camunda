@@ -602,6 +602,323 @@ class TopologyAwarePartitionDistributorTest {
   }
 
   @Nested
+  class EcsFargateReplacementScenario {
+
+    // Simulates ECS Fargate with S3 NodeId Provider:
+    // - No stable ordinals (unlike K8s StatefulSets)
+    // - Replacement task may get a DIFFERENT broker ID (S3 lease not expired)
+    // - Replacement task may land in a DIFFERENT AZ (ECS task placement)
+    // - EFS provides shared persistent storage
+
+    private List<PartitionId> eightPartitions() {
+      return List.of(
+          PartitionId.from(GROUP, 1),
+          PartitionId.from(GROUP, 2),
+          PartitionId.from(GROUP, 3),
+          PartitionId.from(GROUP, 4),
+          PartitionId.from(GROUP, 5),
+          PartitionId.from(GROUP, 6),
+          PartitionId.from(GROUP, 7),
+          PartitionId.from(GROUP, 8));
+    }
+
+    @Test
+    void shouldHandleReplacementWithDifferentBrokerIdInSameRegion() {
+      // given — broker 3 (us-east-1b) dies, S3 lease still held
+      // ECS launches replacement that acquires broker ID 8 (next sequential)
+      // Replacement lands in us-east-1a (same region, different AZ)
+      final var originalMembers =
+          Set.of(
+              MemberId.from("0"),
+              MemberId.from("1"),
+              MemberId.from("2"),
+              MemberId.from("3"),
+              MemberId.from("4"),
+              MemberId.from("5"),
+              MemberId.from("6"),
+              MemberId.from("7"));
+      final var originalConstraints =
+          new TopologyConstraints(
+              Map.ofEntries(
+                  Map.entry(MemberId.from("0"), "us-east-1a"),
+                  Map.entry(MemberId.from("1"), "us-east-1a"),
+                  Map.entry(MemberId.from("2"), "us-east-1b"),
+                  Map.entry(MemberId.from("3"), "us-east-1b"),
+                  Map.entry(MemberId.from("4"), "eu-west-1a"),
+                  Map.entry(MemberId.from("5"), "eu-west-1a"),
+                  Map.entry(MemberId.from("6"), "eu-west-1b"),
+                  Map.entry(MemberId.from("7"), "eu-west-1b")),
+              Map.ofEntries(
+                  Map.entry(MemberId.from("0"), "us-east"),
+                  Map.entry(MemberId.from("1"), "us-east"),
+                  Map.entry(MemberId.from("2"), "us-east"),
+                  Map.entry(MemberId.from("3"), "us-east"),
+                  Map.entry(MemberId.from("4"), "eu-west"),
+                  Map.entry(MemberId.from("5"), "eu-west"),
+                  Map.entry(MemberId.from("6"), "eu-west"),
+                  Map.entry(MemberId.from("7"), "eu-west")));
+
+      // when — broker 3 replaced by broker 8 in us-east-1a (different ID, different AZ)
+      final var replacedMembers =
+          Set.of(
+              MemberId.from("0"),
+              MemberId.from("1"),
+              MemberId.from("2"),
+              // broker 3 gone, broker 8 is the replacement
+              MemberId.from("8"),
+              MemberId.from("4"),
+              MemberId.from("5"),
+              MemberId.from("6"),
+              MemberId.from("7"));
+      final var replacedConstraints =
+          new TopologyConstraints(
+              Map.ofEntries(
+                  Map.entry(MemberId.from("0"), "us-east-1a"),
+                  Map.entry(MemberId.from("1"), "us-east-1a"),
+                  Map.entry(MemberId.from("2"), "us-east-1b"),
+                  Map.entry(MemberId.from("8"), "us-east-1a"), // landed in different AZ
+                  Map.entry(MemberId.from("4"), "eu-west-1a"),
+                  Map.entry(MemberId.from("5"), "eu-west-1a"),
+                  Map.entry(MemberId.from("6"), "eu-west-1b"),
+                  Map.entry(MemberId.from("7"), "eu-west-1b")),
+              Map.ofEntries(
+                  Map.entry(MemberId.from("0"), "us-east"),
+                  Map.entry(MemberId.from("1"), "us-east"),
+                  Map.entry(MemberId.from("2"), "us-east"),
+                  Map.entry(MemberId.from("8"), "us-east"), // same region
+                  Map.entry(MemberId.from("4"), "eu-west"),
+                  Map.entry(MemberId.from("5"), "eu-west"),
+                  Map.entry(MemberId.from("6"), "eu-west"),
+                  Map.entry(MemberId.from("7"), "eu-west")));
+
+      final var distributor = new TopologyAwarePartitionDistributor(replacedConstraints);
+      final var result = distributor.distributePartitions(replacedMembers, eightPartitions(), 4);
+
+      // then — region balance maintained: 2 replicas per region per partition
+      for (final var partition : result) {
+        assertThat(partition.members()).hasSize(4);
+        final var regionCounts =
+            partition.members().stream()
+                .collect(
+                    Collectors.groupingBy(
+                        m -> replacedConstraints.getRegionForMember(m).orElseThrow(),
+                        Collectors.counting()));
+        assertThat(regionCounts.get("us-east")).isEqualTo(2);
+        assertThat(regionCounts.get("eu-west")).isEqualTo(2);
+      }
+
+      // then — broker 8 is used in partitions (replacement is active)
+      final boolean broker8Used =
+          result.stream().anyMatch(p -> p.members().contains(MemberId.from("8")));
+      assertThat(broker8Used).as("Replacement broker 8 should be assigned to partitions").isTrue();
+
+      // then — broker 3 is NOT used (it's gone)
+      final boolean broker3Used =
+          result.stream().anyMatch(p -> p.members().contains(MemberId.from("3")));
+      assertThat(broker3Used).as("Dead broker 3 should not be in any partition").isFalse();
+    }
+
+    @Test
+    void shouldHandleReplacementLandingInDifferentRegion() {
+      // given — broker 3 (us-east) dies
+      // ECS Fargate has no region-pinned placement: replacement could land in eu-west
+      // This creates an imbalanced topology: us-east=3 brokers, eu-west=5 brokers
+      final var replacedMembers =
+          Set.of(
+              MemberId.from("0"),
+              MemberId.from("1"),
+              MemberId.from("2"),
+              MemberId.from("8"), // replacement landed in eu-west!
+              MemberId.from("4"),
+              MemberId.from("5"),
+              MemberId.from("6"),
+              MemberId.from("7"));
+      final var replacedConstraints =
+          new TopologyConstraints(
+              Map.ofEntries(
+                  Map.entry(MemberId.from("0"), "us-east-1a"),
+                  Map.entry(MemberId.from("1"), "us-east-1a"),
+                  Map.entry(MemberId.from("2"), "us-east-1b"),
+                  Map.entry(MemberId.from("8"), "eu-west-1a"), // wrong region!
+                  Map.entry(MemberId.from("4"), "eu-west-1a"),
+                  Map.entry(MemberId.from("5"), "eu-west-1a"),
+                  Map.entry(MemberId.from("6"), "eu-west-1b"),
+                  Map.entry(MemberId.from("7"), "eu-west-1b")),
+              Map.ofEntries(
+                  Map.entry(MemberId.from("0"), "us-east"),
+                  Map.entry(MemberId.from("1"), "us-east"),
+                  Map.entry(MemberId.from("2"), "us-east"),
+                  Map.entry(MemberId.from("8"), "eu-west"), // wrong region!
+                  Map.entry(MemberId.from("4"), "eu-west"),
+                  Map.entry(MemberId.from("5"), "eu-west"),
+                  Map.entry(MemberId.from("6"), "eu-west"),
+                  Map.entry(MemberId.from("7"), "eu-west")));
+
+      final var distributor = new TopologyAwarePartitionDistributor(replacedConstraints);
+
+      // when
+      final var result = distributor.distributePartitions(replacedMembers, eightPartitions(), 4);
+
+      // then — still 4 replicas per partition
+      for (final var partition : result) {
+        assertThat(partition.members()).hasSize(4);
+      }
+
+      // then — both regions still have replicas (even though imbalanced 3 vs 5)
+      for (final var partition : result) {
+        final var regionCounts =
+            partition.members().stream()
+                .collect(
+                    Collectors.groupingBy(
+                        m -> replacedConstraints.getRegionForMember(m).orElseThrow(),
+                        Collectors.counting()));
+        assertThat(regionCounts).containsKeys("us-east", "eu-west");
+        // us-east has only 3 brokers, so it can contribute at most 2 (RF/2=2)
+        // but might only get 1 if some partitions can't fit 2 from 3 brokers across 8 partitions
+        assertThat(regionCounts.get("us-east"))
+            .as("us-east (3 brokers) should have at least 1 replica")
+            .isGreaterThanOrEqualTo(1);
+        assertThat(regionCounts.get("eu-west"))
+            .as("eu-west (5 brokers) should have replicas")
+            .isGreaterThanOrEqualTo(1);
+      }
+
+      // then — disaster recovery: losing eu-west still leaves us-east replicas
+      for (final var partition : result) {
+        final long usEastReplicas =
+            partition.members().stream()
+                .filter(
+                    m -> "us-east".equals(replacedConstraints.getRegionForMember(m).orElse(null)))
+                .count();
+        assertThat(usEastReplicas)
+            .as("Partition %s must have ≥1 us-east replica for DR", partition.id())
+            .isGreaterThanOrEqualTo(1);
+      }
+    }
+
+    @Test
+    void shouldHandleS3LeaseExpiredAndSameIdReacquired() {
+      // given — broker 3's S3 lease expires, new ECS task acquires the SAME ID (3)
+      // but lands in a different AZ (ECS Fargate doesn't guarantee AZ placement)
+      final var members =
+          Set.of(
+              MemberId.from("0"),
+              MemberId.from("1"),
+              MemberId.from("2"),
+              MemberId.from("3"), // same ID, different AZ
+              MemberId.from("4"),
+              MemberId.from("5"),
+              MemberId.from("6"),
+              MemberId.from("7"));
+
+      // Broker 3 was in us-east-1b, now in us-east-1a (different AZ, same region)
+      final var newConstraints =
+          new TopologyConstraints(
+              Map.ofEntries(
+                  Map.entry(MemberId.from("0"), "us-east-1a"),
+                  Map.entry(MemberId.from("1"), "us-east-1a"),
+                  Map.entry(MemberId.from("2"), "us-east-1b"),
+                  Map.entry(MemberId.from("3"), "us-east-1a"), // was us-east-1b, now us-east-1a
+                  Map.entry(MemberId.from("4"), "eu-west-1a"),
+                  Map.entry(MemberId.from("5"), "eu-west-1a"),
+                  Map.entry(MemberId.from("6"), "eu-west-1b"),
+                  Map.entry(MemberId.from("7"), "eu-west-1b")),
+              Map.ofEntries(
+                  Map.entry(MemberId.from("0"), "us-east"),
+                  Map.entry(MemberId.from("1"), "us-east"),
+                  Map.entry(MemberId.from("2"), "us-east"),
+                  Map.entry(MemberId.from("3"), "us-east"), // same region
+                  Map.entry(MemberId.from("4"), "eu-west"),
+                  Map.entry(MemberId.from("5"), "eu-west"),
+                  Map.entry(MemberId.from("6"), "eu-west"),
+                  Map.entry(MemberId.from("7"), "eu-west")));
+
+      final var distributor = new TopologyAwarePartitionDistributor(newConstraints);
+
+      // when
+      final var result = distributor.distributePartitions(members, eightPartitions(), 4);
+
+      // then — region balance still 2+2 (same region, just different AZ)
+      for (final var partition : result) {
+        final var regionCounts =
+            partition.members().stream()
+                .collect(
+                    Collectors.groupingBy(
+                        m -> newConstraints.getRegionForMember(m).orElseThrow(),
+                        Collectors.counting()));
+        assertThat(regionCounts.get("us-east")).isEqualTo(2);
+        assertThat(regionCounts.get("eu-west")).isEqualTo(2);
+      }
+
+      // then — us-east now has 3 brokers in us-east-1a, 1 in us-east-1b (AZ imbalance)
+      // but region-level balance is maintained
+      final var usEastZoneCounts =
+          result.stream()
+              .flatMap(p -> p.members().stream())
+              .filter(m -> "us-east".equals(newConstraints.getRegionForMember(m).orElse(null)))
+              .collect(
+                  Collectors.groupingBy(
+                      m -> newConstraints.getZoneForMember(m).orElseThrow(),
+                      Collectors.counting()));
+      assertThat(usEastZoneCounts).containsKeys("us-east-1a");
+      // us-east-1b still has broker 2, so it should appear
+      assertThat(usEastZoneCounts).containsKey("us-east-1b");
+    }
+
+    @Test
+    void shouldLeadersRebalanceAfterEcsReplacement() {
+      // given — broker 3 replaced by broker 8, both in us-east
+      final var members =
+          Set.of(
+              MemberId.from("0"),
+              MemberId.from("1"),
+              MemberId.from("2"),
+              MemberId.from("8"),
+              MemberId.from("4"),
+              MemberId.from("5"),
+              MemberId.from("6"),
+              MemberId.from("7"));
+      final var constraints =
+          new TopologyConstraints(
+              Map.ofEntries(
+                  Map.entry(MemberId.from("0"), "us-east-1a"),
+                  Map.entry(MemberId.from("1"), "us-east-1a"),
+                  Map.entry(MemberId.from("2"), "us-east-1b"),
+                  Map.entry(MemberId.from("8"), "us-east-1b"),
+                  Map.entry(MemberId.from("4"), "eu-west-1a"),
+                  Map.entry(MemberId.from("5"), "eu-west-1a"),
+                  Map.entry(MemberId.from("6"), "eu-west-1b"),
+                  Map.entry(MemberId.from("7"), "eu-west-1b")),
+              Map.ofEntries(
+                  Map.entry(MemberId.from("0"), "us-east"),
+                  Map.entry(MemberId.from("1"), "us-east"),
+                  Map.entry(MemberId.from("2"), "us-east"),
+                  Map.entry(MemberId.from("8"), "us-east"),
+                  Map.entry(MemberId.from("4"), "eu-west"),
+                  Map.entry(MemberId.from("5"), "eu-west"),
+                  Map.entry(MemberId.from("6"), "eu-west"),
+                  Map.entry(MemberId.from("7"), "eu-west")));
+
+      final var distributor = new TopologyAwarePartitionDistributor(constraints);
+
+      // when
+      final var result = distributor.distributePartitions(members, eightPartitions(), 4);
+
+      // then — leaders still balanced 4/4 across regions despite ID change
+      final var leaderRegions =
+          result.stream()
+              .map(
+                  p -> {
+                    final var primary = p.getPrimary().orElseThrow();
+                    return constraints.getRegionForMember(primary).orElseThrow();
+                  })
+              .collect(Collectors.groupingBy(r -> r, Collectors.counting()));
+      assertThat(leaderRegions.get("us-east")).isEqualTo(4);
+      assertThat(leaderRegions.get("eu-west")).isEqualTo(4);
+    }
+  }
+
+  @Nested
   class ThreeRegionCluster {
 
     // 12 brokers: 4 per region, 2 zones per region
