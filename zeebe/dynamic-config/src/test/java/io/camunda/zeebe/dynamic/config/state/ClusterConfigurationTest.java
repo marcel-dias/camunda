@@ -350,6 +350,28 @@ class ClusterConfigurationTest {
   }
 
   @Test
+  void shouldMergeTopologyDifferencesWithoutConflict() {
+    // given — same version, different topology (simulates rolling upgrade)
+    final var withoutTopology = MemberState.initializeAsActive(Map.of());
+    final var topo = new TopologyInfo();
+    topo.setZone("zone-a");
+    final var withTopology =
+        new MemberState(
+            withoutTopology.version(),
+            withoutTopology.lastUpdated(),
+            withoutTopology.state(),
+            withoutTopology.partitions(),
+            topo);
+
+    // when
+    final var merged = withoutTopology.merge(withTopology);
+
+    // then — should prefer the one with topology, not throw
+    assertThat(merged.topology().isConfigured()).isTrue();
+    assertThat(merged.topology().getZone()).isEqualTo("zone-a");
+  }
+
+  @Test
   void shouldMergeRoutingState() {
     // given
     final var oldRoutingState =

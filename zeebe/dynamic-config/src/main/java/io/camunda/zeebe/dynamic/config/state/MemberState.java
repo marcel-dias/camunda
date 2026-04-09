@@ -152,6 +152,12 @@ public record MemberState(
     }
 
     if (version == other.version && !equals(other)) {
+      // Check if the only difference is topology configuration (rolling upgrade scenario)
+      if (isOnlyTopologyDifference(other)) {
+        // Prefer the one with configured topology
+        return topology.isConfigured() ? this : other;
+      }
+
       // This is special logic to handle rolling update to 8.6 where we introduced DynamicConfig for
       // partitions. This can be removed after 8.6 release
       if (isDynamicConfigMismatchDueToUpgrade86(partitions, other.partitions())) {
@@ -204,6 +210,14 @@ public record MemberState(
                     Comparator.naturalOrder(), Entry::getKey, Entry::getValue));
 
     return new MemberState(version, lastUpdated, state, updatedPartitions, this.topology);
+  }
+
+  private boolean isOnlyTopologyDifference(final MemberState other) {
+    return version == other.version
+        && state == other.state
+        && lastUpdated.equals(other.lastUpdated)
+        && partitions.equals(other.partitions)
+        && !topology.equals(other.topology);
   }
 
   // returns true if the only mismatch is in the dynamic partition config. One would be
